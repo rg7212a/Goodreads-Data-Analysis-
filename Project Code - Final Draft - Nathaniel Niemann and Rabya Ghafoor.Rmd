@@ -1,0 +1,218 @@
+---
+title: "STAT-613 Final Project - Analysis"
+output:
+  pdf_document: default
+  pdf: default
+  html_document:
+    df_print: paged
+---
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(shiny)
+library(modelr)
+library(stringr)
+library(rvest)
+library(tidyr)
+library(lubridate)
+library(ggmap)
+```
+
+##Introduction:
+
+The Pulitzer Prize-winning author Michael Chabon whose work includes “The Amazing Adventures of Kavalier & Clay”, “Wonder Boys”, and “Telegraph Avenue” is back with a highly anticipated memoir, "Moonglow." Goodreads talked to Chabon about his new novel, his writing style, and his influences. According to Chabon, the most important and strong influences happened early in his career. Some of his earliest, but more important, influences ranged from Edgar Allen Poe and Sir Arthur Conan Doyle, Ursula K. Le Guin, fiction and fantasy writers to F. Scott Fitzgerald, John Cheever, Barry Hannah, and Flannery O'Connor. For Chabon, a lot of it was being affected by the literary style of the writer, and then trying to imitate that style. Learning by imitation was the best way to learn how to write. As he says, “passion and enthusiasm come and go and influences fade… what you're left with is how to put sentences together from imitating a writer who is really good at knowing how to do that.”
+
+As part of our final project we scraped data from the Goodreads database to further explore author demographics and the effect of known influences on an author's literary work. We all are influenced by the world around us, and have unique, individual experiences that affect our personality. In the same way, an author is influenced by his past and the works of famous writers. Gender, race, and socioeconomic status also have a huge impact one one’s writing. The topic is of interest because we can explore how writers can be interconnected with each other through the values and beliefs that many of them may share. We can further explore the direct effects influences can have on authors by comparing the fan following, the amount of work that is produced, as well as the average rating of text reviews  between authors who have identified influences as opposed to those authors who do not. By mapping out author influences across generations we specifically sought to develop a greater understanding of the effects generations of influences can have on an author's process and motivation for writing. We hypothesize that author's with known influences are more likely to have greater fan following, produce different forms of literary art and creative writing, as well receive higher text review ratings.
+
+
+#Data Generation
+While deciding on a data source was easy, actually accessing that data would prove to be a fairly involved process for a variety of reasons. Goodreads’ data is accessible through a RESTful API, which an enterprising amateur developer wrote an open-source R-wrapper for called (appropriately enough) RGoodreads. This allows us to query Goodreads’ API and get data returned from it, but with some limitations. First, the API only accepts one query subject at a time - we couldn’t pass it hundreds of queries and get back a dataframe of the results. Second, the terms and conditions of the API specify that it can’t be used for “true scraping”; queries have to be spaced one second apart. Last, Goodreads’ database isn’t organized in a particularly sensible way. Unique identifiers (author_id for authors) are assigned more-or-less randomly, with huge gaps between one valid ID and another for seemingly no reason. As such, there’s no real way to know ahead of time what author you might return data for if you’re using author_id. These limitations, combined with the fact that the data spans over two billion individual books and many hundreds of millions of distinct authors, meant that scraping the API for the entirety of author or book data was not possible with our resources. To get around that, we decided to take a subset of Goodreads author data instead, while offering the ability for a user to use custom-defined authors in our Shiny app. To do so, we wrote a function which would loop through however many IDs was necessary to generate the first 1,000 authors ever inserted into the database. That set of 1,000 authors would form the core of our sample data, which would be used for analysis and the default input for our Shiny app.
+
+Generating 1,000 rows of author data required looping through author IDs from 1 to 1,500; about 30% of all queried IDs were invalid. Author data from Goodreads contains a variety of fields ripe for analysis; aside from identifying fields like Name, it also included some basic demographic information like gender, birth date, and hometown. Crucially for our purposes, it also included the Influences field, a character vector including the Goodreads Author URL and short-form biography of anyone determined to be an Influence of that author. This data is entered by Goodreads Librarians, users who have gone through a volunteer training program of a few hours and are granted edit rights for parts of the site; Influence data specifically has to be sourced back to an author interview or contemporaneous account of the relationship between author and Influencer. While it is thus susceptible to human error, the guidelines for when Influences should be entered are stringent enough that the data can be used for analysis. We wrote a cleaner function that would, for a given set of author data, strip out the Influence character vector and return the Author IDs of any Influences contained within it. A second function would then take in those Author IDs and feed them to the RGoodreads API wrapper, which would return a dataframe of author data for each of those authors. One last function would then execute those two functions recursively, repeatedly finding Authors, stripping out their Influences, finding the IDs of those influences, generating author data for those authors, and so on, stitching all of that data together in one dataframe. For our sample data set of the first 1,000 authors entered into Goodreads’ database, 67 authors had Influences listed. When we applied this recursive data generation function on those authors, we generated over 1,400 authors from 8 distinct recursion loops (referred to as “Influence Generations”). This is what we refer to as the “Influence Lineage” data for a given author (or, in the case of the sample data, set of authors).
+
+The final component of data generation was to gather the required information for visualization. As we wanted to map author influences by hometown, this meant we needed to find a way to tie a city to a latitude-longitude coordinate. Google’s Geocode API is perfectly suited to this work, so we wrote a simple function to feed the Geocode API (itself tapped through the ggmap library) the Hometown data for our author Influences. The returned dataframe of latitude-longitude coordinates was mapped back to the Influence Lineage data, at which point our data is ready to be visualized and analyzed.
+
+
+
+#Data Analysis and Visualization
+
+```{r}
+# First let's load in the data.  I generated one CSV of the first ~1000 authors which had GoodReads
+# pages created, and found one CSV of the first 3,500 books to be given GoodReads pages.
+
+raw_author_data <- read.csv("one_thousand_authors.csv")
+raw_book_data <- read.csv("~/books.csv")
+```
+
+
+```{r}
+#Dataframe of 67 authors with influences
+influenced_authors <- raw_author_data %>%
+  filter(raw_author_data$influences != "")
+influenced_authors <- influenced_authors %>% mutate_all(na_if,"")
+```
+
+
+```{r}
+#in order to have the same sample size, subset to the first 67  authors with no influences 
+non_influenced_authors <- raw_author_data %>%
+  filter(raw_author_data$influences == "") %>%
+  slice(1:67)
+#fill all blank values in the data frame with NA
+non_influenced_authors <- non_influenced_authors %>% mutate_all(na_if,"")
+```
+```{r}
+ggplot(influenced_authors, aes(works_count, fans_count)) +
+  geom_smooth(se = FALSE, method = lm) +
+   geom_point(aes(color = gender)) +
+  labs(title ="Influenced Authors' Works Count and Fans Count by Gender")
+```
+```{r}
+reg = lm(fans_count~ works_count, data = influenced_authors)
+summary(reg) 
+```
+
+# A 99% confidence interval for the slope
+```{r}
+confint(reg,level=0.99)
+```
+
+According to the graph we can observe that a greater proportion of authors with influences are identified as males. There is a lot of variation of responses around the regression line. A positive trend is apparent, but regression  cannot be used to produce an accurate prediction of the number of fans. Points are relatively far from the regression line, so no, it does not fit the data well. The regression equation for the following model is 6.53X + 1378.55.  The intercept b0 = 1379 means that for all population units with independent variable X = 0, the expected response is E(Y ) = 13783.55. The slope beta1 = 6.53 means that a 1-unit increment of X causes a 6.53-unit increase in the expected response. Moreover, since the p-value 2.182e-09 is less than the 5% significance level we can reject the null hypothesis and conclude that there is a significant relationship between the literary work an author produces and the number of fan following he or she has. The R-squared is a goodness-of-fit measure for linear regression models. This statistic indicates the percentage of the variance in the dependent variable that the can be explained by the independent variable. In this case, 42.59% of variation in the number of fans can be explained by the number of works an author produces. It was expected that the independent variable would not entirely explain the dependent because more than the quantity of the work that is produced, it is more about the quality.  
+
+
+```{r}
+ggplot(non_influenced_authors, aes(works_count, fans_count)) +
+  geom_smooth(se = FALSE, method = lm) +
+   geom_point(aes(color = gender)) +
+  labs(title ="Non-Influenced Authors' Works Count and Fans Count by Gender")
+```
+
+
+```{r}
+reg2 = lm(fans_count ~ works_count, data = non_influenced_authors)
+summary(reg2)
+```
+```{r}
+# A 99% confidence interval for the slope
+confint(reg2,level=0.99)
+```
+ 
+According to the graph most non-influenced authors are not affiliated with a gender. Although it is seen that non-influenced authors have a steeper slope where b1 = 8.946 than compared to influenced authors, the scaling of the work_count is smaller for non-influenced authors. Based on the plotted points there does not seem to be a linear relationship between the variables works_count and fans_count. This finding is further confirmed by the p-value which is greater than the 5% signficance level. Hence, suggesting that there is no signifcant realtionship between the two variables for non-influenced authors. Since the 99% confidence interval does include 0, we can conclude at the 1% level of significance, that the slope b1 is insignificant which means that the works_count is not an important variable in predicting the fans_count of non-influenced authors, whereas for influenced authors the slope is found to be significant. In addition to the insignificant slope of non-infleunced authors only 1.965% of variation in fans_Count can be explained by works_count.   
+
+
+```{r}
+#Combining both data frames
+bothdfs <- rbind(influenced_authors, non_influenced_authors)
+```
+
+
+```{r}
+#Creating a categorical variable for influences
+attach(bothdfs)
+bothdfs$influences <- "NO"
+bothdfs$influences[1:67] <- "YES"
+```
+
+
+```{r}
+mod1 <- lm(fans_count ~ influences, data = bothdfs)
+summary(mod1)
+```
+
+```{r}
+ggplot(bothdfs, aes(works_count, fans_count)) +
+  geom_smooth(se = FALSE) +
+   geom_point(aes(color = influences)) +
+  labs(title =  " Works Count and Fans Count by Influenced and Non-influenced Authors")
+```
+
+According to the graph there does not seem to be an apparent linear relationship between works_count and fans_count, however we can observe that a greater proportion of authors who have influences are males. To study the direct effects of influences on authors' fan following we regressed fans_count on the presence of influences. Since the p-value 0.000238 is less than the 5% significance level we reject the null hypothesis and can conclude that there is a significant relationship between fans_count and the presence of influences.
+
+
+```{r}
+attach(bothdfs)
+ t.test(x=fans_count[influences=="YES"], y=fans_count[influences=="NO"])
+```
+
+
+To further confirm our results, we conducted a Welch Two Sample t-test. This test compared the mean of sample X with the mean of sample Y, authors with influences and without influences. We find a significant evidence that the mean fans_count are different in the population, and thus, the number of fans an author has does depend on whether the author has influences. The difference between mean fans_count of an author with and without influences has 95% confidence limits between 1873.875 and 6041.76.
+
+
+
+```{r}
+ t.test(x=fans_count[influences=="YES"], y=fans_count[influences=="NO"], alternative="greater")
+```
+
+Since the p-value is less than the 5% signficance level we can conclude that there is significant evidence that authors with the influences have greater fan following on the average. 
+
+
+
+
+
+
+To better visualize and identify authors that have a greater fan following as well as their hometown in a more interactive way we chose to use the plotly library. From our results we can see that both influenced authors Jane Austen and Williams Shakespeare has the highest and second highest fan following, respectively.  On the other John Adams despite having known influences does not greater fan following (94 fans) than compared to those authors who do not have influences at all such as Malcolm Gladwell with a fan_count of 22,462 fans. This suggest that even though influences may be an important predictor of fan following it is not the only one. In addition to the author, there are other factors that influence a reader when choosing their reading material such as the genre, text review, average rating, and writing style.
+
+
+
+
+
+```{r}
+books <- raw_book_data %>% 
+  rename(name = authors)
+
+```
+
+```{r}
+influenced_books <- merge(books, influenced_authors, by.x = "name")
+non_influenced_books <- merge(books, non_influenced_authors, by.x = "name")
+```
+
+```{r}
+influenced_books <- influenced_books %>% slice(1:15)
+books_bothdfs <- rbind(influenced_books, non_influenced_books)
+```
+
+
+
+```{r}
+books_bothdfs$influences <- "NO"
+books_bothdfs$influences[1:15] <- "YES"
+```
+
+```{r}
+ggplot(books_bothdfs, aes(influences, average_rating)) +
+  geom_smooth(se = FALSE) +
+   geom_point(aes(color = influences)) +
+  labs(title ="Effect of Influenced and Non-Influenced Authors on Book Rating ")
+```
+
+
+
+
+
+```{r}
+attach (books_bothdfs)
+ t.test(x=average_rating[influences=="YES"], y=average_rating[influences=="NO"], alternative="greater")
+```
+
+
+
+The results from the two sample t-test and graph suggest that there is no signficant relationship between avergae rating of a book and whether or not an author has infleunces. According to the graph it seems that the books of authors with no influences has a higher rating than books of authors with influences. This suggests that than more than whether or not an author is infleunced by another famous writer such as Williams Shakespeare, it may be more important for a reader to rate a book based on its content, language, and topic.
+
+
+
+
+#Conclusion 
+
+Writers are influenced by what they see, hear, and read. Good writers have a passion for words. Reading works by talented authors encourages a good writer to become better. By reading across the literary spectrum a writer gains new insights into what is possible. The innovative process is the act of borrowing existing concepts and combining them into a new form. Through this project we were able to understand the effects influences may have on the amount of work an author produces, the number of fans an author has, as well as the average rating of associated books. Our results suggest that there may a significant relationship between the number of fans and whether or not an authors has influences. Although the linearity of this relationship is not apparent through two sample t-testing we were able to confirm that on average authors with greater influences would also have greater fan following. 
+
+In addition to understanding the significance of influences through linear models and hypothesis testing, we were interested in visualizing the influence lineage of a particular author. For our shiny app were able to take in a user input or selected author name, run that through the Goodreads API, and then if the name is found by Goodreads pull the influence lineage for the author going back 8 generations of influences. As much as we wish, it is inevitable to go back in time, but this app serves as an interactive tool that allows us to step back in time and visualize the author's influences and how their influences interconnect over generation and time. Although our results are meaningful further improvements can be made. Since we were only able to generate the full influence lineage on the first 1000 authors and of those only 67 authors had influences listed to begin with, overfitting becomes much harder to avoid in not only drawing conclusions but also making further comparisons. Since our dataset of influenced authors is small to make fair comparisons, we decide to take the first 67 non-influenced authors from the parent data frame. Hence, our analysis may not be representative of the entire data set and thus have less statistical power. Furthermore, missing values in data has an effect in a similar direction as measurement errors. Our data set had missing values for each category limiting the data size. Since our target variable influences had missing values the whole observation had to be dropped which was not desirable in such a case. With a small data set, abnormal data values can impact predictive capacity which makes it important that we spend more time reviewing, cleaning, and managing our data. This means imputing missing values or even deciding how to use them in our analysis can lay out the basis for extended research.
+
+
+
+
+```{r}
+sessioninfo::session_info()
+```
+
